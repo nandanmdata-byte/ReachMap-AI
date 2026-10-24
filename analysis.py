@@ -71,6 +71,37 @@ def interaction_log(data):
         columns].reset_index(drop=True)
 
 
+def overlap_durations(data):
+    """Estimate observed fingertip overlap time by object class."""
+    if 'overlap_objects' not in data.columns:
+        return pd.DataFrame(columns=['object_class', 'overlap_seconds'])
+
+    elapsed = data['seconds'].diff().fillna(0)
+    overlaps = data['overlap_objects'].fillna('').str.split('|')
+
+    totals = {}
+
+    for i in range(1, len(data)):
+        seconds = elapsed.iloc[i]
+
+        # Ignore long gaps between frames.
+        if seconds <= 0 or seconds > 0.25:
+            continue
+
+        # Count time only when an object overlaps in both frames.
+        common = set(overlaps.iloc[i - 1]) & set(overlaps.iloc[i])
+
+        for name in common:
+            if name:
+                totals[name] = totals.get(name, 0) + seconds
+
+    summary = pd.DataFrame(
+        [(name, round(seconds, 1)) for name, seconds in totals.items()],
+        columns=['object_class', 'overlap_seconds']
+    )
+
+    return summary.sort_values('overlap_seconds', ascending=False)
+
 def session_insights(summary, objects=None, events=None):
     total_visits = int(summary['visits'].sum())
     total_seconds = float(summary['observed_seconds'].sum())

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from analysis import (heatmap, interaction_log, load_session, object_summary,
-                      session_insights, summarize)
+                      overlap_durations, session_insights, summarize)
 
 ROOT = Path(__file__).resolve().parent
 SESSIONS = ROOT / 'data' / 'sessions'
@@ -70,14 +70,21 @@ elif objects.empty:
     st.info('YOLO did not detect any recognized objects inside the selected desk.')
 else:
     st.caption('Counts refer to YOLO object classes, not individually tracked physical items.')
-    st.dataframe(objects, hide_index=True, use_container_width=True)
-    left, right = st.columns(2)
-    with left:
-        st.write('**Frames where each class was detected**')
-        st.bar_chart(objects.set_index('object_class')['detected_frames'])
-    with right:
-        st.write('**Confirmed possible interactions by class**')
-        st.bar_chart(objects.set_index('object_class')['possible_interactions'])
+
+    # Show useful interaction measures rather than object detection frame counts.
+    activity = objects[['object_class', 'possible_interactions']].copy()
+    if 'overlap_objects' in data.columns:
+        durations = overlap_durations(data)
+        activity = activity.merge(durations, on='object_class', how='left')
+        activity['overlap_seconds'] = activity['overlap_seconds'].fillna(0)
+        activity = activity.sort_values('overlap_seconds', ascending=False)
+        st.caption('Overlap duration is approximate fingertip-to-box overlap, not physical contact.')
+    else:
+        st.caption('Record a new session to include overlap durations.')
+    st.dataframe(activity, hide_index=True, use_container_width=True)
+
+    st.write('**Confirmed possible interactions by class**')
+    st.bar_chart(objects.set_index('object_class')['possible_interactions'])
 
     st.write('**Possible interaction event log**')
     if events.empty:
@@ -87,6 +94,6 @@ else:
 
 st.caption('A detection frame is not a visit. A possible interaction is sustained index-fingertip '
            'overlap with a detected bounding box, not confirmed physical touch. '
-           'Observed durations are approximate and zone-based; no ergonomic risk is inferred.')
+           'Observed durations are approximate; no ergonomic risk is inferred.')
 st.download_button('Download session CSV', selected.read_bytes(),
                    file_name=selected.name, mime='text/csv')

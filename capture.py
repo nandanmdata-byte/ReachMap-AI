@@ -21,6 +21,7 @@ DWELL_SECONDS = 0.4
 TRACKING_LOSS_SECONDS = 0.75
 INTERACTION_SECONDS = 0.4
 INTERACTION_GAP_SECONDS = 0.75
+PALM_SIZE_LIMIT = 1.5  # Reject unusually large hands after calibration.
 
 
 def ensure_model():
@@ -64,6 +65,21 @@ def palm_position(result, frame_width, frame_height):
     return float(px), float(py)
 
 
+def palm_size(result, frame_width, frame_height):
+    """Estimate palm size in pixels using stable hand landmarks."""
+
+    if not result.hand_landmarks:
+        return None
+    hand = result.hand_landmarks[0]
+
+    # Wrist to middle knuckle (0-9) and across knuckles (5-17).
+    length = np.hypot((hand[0].x - hand[9].x) * frame_width,
+                      (hand[0].y - hand[9].y) * frame_height)
+    width = np.hypot((hand[5].x - hand[17].x) * frame_width,
+                     (hand[5].y - hand[17].y) * frame_height)
+    return float((length + width) / 2)
+
+
 def desk_position(point, desk):
     x, y, w, h = desk
     px, py = point
@@ -89,7 +105,6 @@ def draw_desk(frame, desk):
 
 def detect_objects(frame, desk, fingertip, model):
     """Return detected object classes and classes overlapping the fingertip."""
-    
     result = model.predict(frame, conf=0.4, verbose=False)[0]
     detected = set()
     overlaps = set()
@@ -149,12 +164,14 @@ def run(source):
         overlap_start = {}
         overlap_last = {}
         active_interactions = set()
+        reference_size = None  # Set once when user presses C with hand on desk.
 
         with open(output, 'w', newline='', encoding='utf-8') as handle, \
                 mp.tasks.vision.HandLandmarker.create_from_options(options) as landmarker:
-            writer = csv.writer(handle)
+            writer = csv.writer(handle) 
             writer.writerow(['seconds', 'x', 'y', 'zone', 'visit',
-                             'objects', 'interaction_events'])
+                            'objects', 'interaction_events', 'overlap_objects'])
+
 
             while True:
                 ok, frame = cap.read()
@@ -172,9 +189,15 @@ def run(source):
 
                 width, height = frame.shape[1], frame.shape[0]
                 point = palm_position(result, width, height)
+                size = palm_size(result, width, height)
+                too_close = (reference_size is not None and size is not None and
+                             size > reference_size * PALM_SIZE_LIMIT)
                 relative = desk_position(point, desk) if point else None
+                if reference_size is None or too_close:
+                    relative = None  # Invalid observations cannot count as visits.
+
                 fingertip = None
-                if result.hand_landmarks:
+                if result.hand_landmarks and reference_size is not None and not too_close:
                     finger = result.hand_landmarks[0][8]  # Index fingertip.
                     candidate = (finger.x * width, finger.y * height)
                     if desk_position(candidate, desk) is not None:
@@ -223,12 +246,25 @@ def run(source):
                     pending_zone = None
                     if now - last_seen > TRACKING_LOSS_SECONDS:
                         stable_zone = None
-                    label = 'Hand outside desk / not detected'
+                    if reference_size is None:
+                        label = 'Place one hand on desk, press C to calibrate'
+                    elif too_close:
+                        label = 'Hand too close to camera - ignored'
+                    else:
+                        label = 'Hand outside desk / not detected'
 
                 # Save EVERY frame, including object detections without a hand.
-                writer.writerow([round(seconds, 3), round(x, 4) if x != '' else '',
-                                 round(y, 4) if y != '' else '', zone, visit,
-                                 '|'.join(sorted(detected)), '|'.join(sorted(events))])
+                writer.writerow([
+                    round(seconds, 3),
+                    round(x, 4) if x != '' else '',
+                    round(y, 4) if y != '' else '',
+                    zone,
+                    visit,
+                    '|'.join(sorted(detected)),
+                    '|'.join(sorted(events)),
+                    '|'.join(sorted(overlaps))
+                ])
+
 
                 cv2.putText(frame, label, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
                             0.7, (255, 255, 255), 2)
@@ -236,7 +272,15 @@ def run(source):
                             f'{interaction_count} | Q: finish', (15, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
                 cv2.imshow('ReachMap - Recording', frame)
-                if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('c') and reference_size is None:
+                    if (size is not None and size > 0 and point is not None and
+                            desk_position(point, desk) is not None):
+                        reference_size = size
+                        print(f'Palm calibrated: {reference_size:.1f} pixels')
+                    else:
+                        print('Calibration failed: hold one hand inside the desk.')
+                if key in (ord('q'), 27):
                     break
 
         print(f'Session saved to: {output}')
