@@ -1,4 +1,23 @@
+
+# Virtual environment
 .venv/
+venv/
+
+# Python cache files
 __pycache__/
-models/*.task
+*.pyc
+
+# Session recordings
 data/sessions/*.csv
+
+# MediaPipe model
+models/*.task
+
+# YOLO model weights
+*.pt
+
+# Local environment files
+.env
+
+# Streamlit local settings
+.streamlit/secrets.toml
