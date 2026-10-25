@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent
 SESSIONS = ROOT / 'data' / 'sessions'
 
 st.set_page_config(page_title='ReachMap AI', layout='wide')
-st.title('ReachMap AI — Smart Workspace Movement Analyzer')
+st.title('🧠 ReachMap AI — Smart Workspace Movement Analyzer')
 st.write('Overhead-camera hand tracking, object detections, and possible interactions.')
 st.info('Record a session with `python capture.py --camera 1`, then refresh this page.')
 
@@ -39,7 +39,12 @@ fourth.metric('Possible interaction events', len(events))
 
 st.subheader('Session insights')
 for insight in session_insights(zones, objects, events):
-    st.info(insight)
+    if insight.startswith('Far zone:'):
+        st.error(insight)
+    elif insight.startswith('Next action:'):
+        st.warning(insight)
+    else:
+        st.info(insight)
 
 st.subheader('Hand movement')
 left, right = st.columns(2)
@@ -52,7 +57,7 @@ with left:
         ax.axhline(2 / 3, color='black', linestyle='--', alpha=0.6)
         ax.set_xlabel('Horizontal desk position')
         ax.set_ylabel('Far edge → Near edge')
-        ax.set_title('More color = more detected hand samples')
+        ax.set_title('Hand Position Density Across Workspace')
         st.pyplot(fig)
         plt.close(fig)
     else:
@@ -83,8 +88,22 @@ else:
         st.caption('Record a new session to include overlap durations.')
     st.dataframe(activity, hide_index=True, use_container_width=True)
 
-    st.write('**Confirmed possible interactions by class**')
-    st.bar_chart(objects.set_index('object_class')['possible_interactions'])
+    top_objects = objects.nlargest(3, 'possible_interactions')
+    top_objects = top_objects[top_objects['possible_interactions'] > 0]
+
+    if not top_objects.empty:
+        left, center, right = st.columns([1, 2, 1])
+
+        with center:
+            st.subheader(f'**⬆️ Top {len(top_objects)} objects by possible interactions**')
+            st.bar_chart(
+                top_objects.set_index('object_class')['possible_interactions'],
+                height=280
+            )
+    else:
+        st.info('No possible interactions recorded.')
+
+    st.write('---')
 
     st.write('**Possible interaction event log**')
     if events.empty:
