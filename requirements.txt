@@ -1,7 +1,8 @@
-opencv-python
-mediapipe
+opencv-python==4.11.0.86
+mediapipe==0.10.21
 ultralytics
 numpy
 pandas
 matplotlib
-streamlit
+streamlit==1.45.1
+pyarrow==16.1.0
